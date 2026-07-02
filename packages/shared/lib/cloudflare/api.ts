@@ -102,3 +102,70 @@ export const verifyCloudflareToken = async (accountId: string, token: string) =>
     }
   });
 };
+
+/**
+ * Cloudflare KV supports listing up to ~1000 keys per page via cursor.
+ * https://developers.cloudflare.com/api/operations/storage-kv-namespaces-list-keys
+ */
+export interface KVKeyInfo {
+  name: string;
+  expiration?: number;
+  metadata?: any;
+}
+
+export const listCloudflareKVKeys = async (
+  accountId: string,
+  namespaceId: string,
+  token: string,
+  prefix = '',
+): Promise<string[]> => {
+  const keys: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const params = new URLSearchParams();
+    if (prefix) params.set('prefix', prefix);
+    if (cursor) params.set('cursor', cursor);
+    params.set('limit', '1000');
+    const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/keys?${params}`;
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    const json = await res.json();
+    if (!res.ok || !json.success) {
+      return Promise.reject(json);
+    }
+    for (const item of json.result as KVKeyInfo[]) {
+      if (item?.name) keys.push(item.name);
+    }
+    cursor = json.result_info?.cursor || undefined;
+  } while (cursor);
+  return keys;
+};
+
+/**
+ * Read a specific KV key by name (bypassing settingsStorage.storageKey).
+ */
+export const readCloudflareKVByKey = async (
+  accountId: string,
+  namespaceId: string,
+  token: string,
+  storageKey: string,
+): Promise<string> => {
+  const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent(storageKey)}`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+  if (res.status === 404) return '';
+  if (res.status === 200) {
+    return (await res.text()).trim();
+  }
+  return Promise.reject(await res.json());
+};

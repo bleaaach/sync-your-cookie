@@ -1,4 +1,7 @@
 import {
+  pullAndMergeAllStorageKeys,
+  pullAndMergeToLocal,
+  pushAllToActiveStorageKey,
   useStorageSuspense,
   useTheme,
   verifyCloudflareToken,
@@ -20,7 +23,7 @@ import {
   ThemeDropdown,
   Toaster,
 } from '@sync-your-cookie/ui';
-import { Eye, EyeOff, Info, Loader2, LogOut, SlidersVertical } from 'lucide-react';
+import { Eye, EyeOff, Info, Loader2, LogOut, SlidersVertical, CloudDownload, Layers, CloudUpload } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { SettingsPopover } from './components/SettingsPopover';
@@ -36,6 +39,92 @@ const Options = () => {
   const [loadingSave, setLoadingSave] = useState(false);
 
   const { setTheme } = useTheme();
+
+  const [loadingPull, setLoadingPull] = useState(false);
+  const [loadingPullAll, setLoadingPullAll] = useState(false);
+  const [loadingPushAll, setLoadingPushAll] = useState(false);
+
+  const handlePullFromCloud = async () => {
+    if (!accountInfo?.accountId?.trim() && accountInfo?.selectedProvider !== 'github') {
+      toast.warning('Please configure Cloudflare account first');
+      return;
+    }
+    try {
+      setLoadingPull(true);
+      const { remote, counts } = await pullAndMergeToLocal();
+      const remoteDomains = Object.keys(remote?.domainCookieMap || {});
+      const totalDomains = counts.domainsAdded + counts.domainsMerged;
+      console.log('pull remote domains:', remoteDomains);
+      if (remoteDomains.length === 0) {
+        toast.info('Cloud has no sites under current storageKey');
+      } else if (totalDomains === 0) {
+        toast.info(
+          `Cloud has ${remoteDomains.length} site(s) but local already up-to-date`,
+        );
+      } else {
+        toast.success(
+          `Synced ${totalDomains}/${remoteDomains.length} site(s): +${counts.domainsAdded} added, ${counts.domainsMerged} merged, ${counts.cookiesAdded} new cookies, ${counts.cookiesOverridden} updated`,
+        );
+      }
+    } catch (err: any) {
+      console.log('pull error', err);
+      const msg = err?.message || 'Pull failed';
+      toast.error(msg);
+    } finally {
+      setLoadingPull(false);
+    }
+  };
+
+  const handlePullAllFromCloud = async () => {
+    if (accountInfo?.selectedProvider !== 'cloudflare') {
+      toast.warning('This action only works with Cloudflare KV');
+      return;
+    }
+    if (!accountInfo?.accountId?.trim() || !accountInfo?.namespaceId?.trim() || !accountInfo?.token?.trim()) {
+      toast.warning('Please configure Cloudflare account first');
+      return;
+    }
+    try {
+      setLoadingPullAll(true);
+      const { total, keysScanned, keysMerged, perKey } = await pullAndMergeAllStorageKeys();
+      console.log('pull-all per-key results:', perKey);
+      const uniqueDomains = new Set<string>();
+      for (const item of perKey) {
+        for (const host of Object.keys(item.remote?.domainCookieMap || {})) {
+          uniqueDomains.add(host);
+        }
+      }
+      toast.success(
+        `Scanned ${keysScanned} KV key(s), merged ${keysMerged}: +${total.domainsAdded} added, ${total.domainsMerged} merged across ${uniqueDomains.size} unique host(s)`,
+      );
+    } catch (err: any) {
+      console.log('pull-all error', err);
+      const msg = err?.message || 'Pull all failed';
+      toast.error(msg);
+    } finally {
+      setLoadingPullAll(false);
+    }
+  };
+
+  const handlePushAllToActiveKey = async () => {
+    if (!accountInfo?.accountId?.trim() && accountInfo?.selectedProvider !== 'github') {
+      toast.warning('Please configure Cloudflare account first');
+      return;
+    }
+    try {
+      setLoadingPushAll(true);
+      const result = await pushAllToActiveStorageKey();
+      toast.success(
+        `Pushed ${result.hosts} host(s), ${result.cookies} cookie(s), ${result.localStorageItems} localStorage to KV key "${result.storageKey}"`,
+      );
+    } catch (err: any) {
+      console.log('push-all error', err);
+      const msg = err?.message || 'Push all failed';
+      toast.error(msg);
+    } finally {
+      setLoadingPushAll(false);
+    }
+  };
 
   const handleTokenInput: React.ChangeEventHandler<HTMLInputElement> = evt => {
     setToken(evt.target.value);
@@ -288,6 +377,60 @@ const Options = () => {
               />
             </CardHeader>
             {renderAccount()}
+          </Card>
+        </div>
+        <div className="w-full">
+          <Card className="mx-auto min-w-[400px] max-w-lg mt-4">
+            <CardHeader className="relative">
+              <CardTitle className="text-base">Sync from cloud</CardTitle>
+              <CardDescription className="mt-[-4px]">
+                Pull all sites under the current storageKey and merge into local cookieStorage.
+                Useful right after reinstalling the extension.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                disabled={loadingPull}
+                onClick={handlePullFromCloud}
+                type="button"
+                variant="outline"
+                className="w-full">
+                {loadingPull ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <CloudDownload className="mr-2 h-4 w-4" />
+                )}
+                {loadingPull ? 'Pulling…' : 'Pull & merge from cloud'}
+              </Button>
+              <Button
+                disabled={loadingPullAll || loadingPull}
+                onClick={handlePullAllFromCloud}
+                type="button"
+                variant="ghost"
+                className="w-full mt-2 text-xs"
+                size="sm">
+                {loadingPullAll ? (
+                  <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                ) : (
+                  <Layers className="mr-2 h-3 w-3" />
+                )}
+                {loadingPullAll ? 'Scanning KV…' : 'Pull ALL storage keys (scan namespace)'}
+              </Button>
+              <Button
+                disabled={loadingPushAll || loadingPull || loadingPullAll}
+                onClick={handlePushAllToActiveKey}
+                type="button"
+                variant="ghost"
+                className="w-full mt-2 text-xs"
+                size="sm">
+                {loadingPushAll ? (
+                  <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                ) : (
+                  <CloudUpload className="mr-2 h-3 w-3" />
+                )}
+                {loadingPushAll ? 'Pushing…' : 'Push ALL local → current storage key'}
+              </Button>
+            </CardContent>
           </Card>
         </div>
       </div>

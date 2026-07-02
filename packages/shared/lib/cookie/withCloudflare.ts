@@ -91,7 +91,9 @@ export const readCookiesMap = async (accountInfo: AccountInfo): Promise<ICookies
         const compressedBuffer = base64ToArrayBuffer(processedContent);
         const deMsg = await decodeCookiesMap(compressedBuffer);
         console.log('readCookiesMap->deMsg', deMsg);
-        return deMsg;
+        // decodeCookiesMap already returns a plain object via CookiesMap.toObject,
+        // but go through JSON to flatten any leftover class instances.
+        return JSON.parse(JSON.stringify(deMsg));
       } else {
         console.log('readCookiesMap->res', JSON.parse(processedContent));
         return JSON.parse(processedContent);
